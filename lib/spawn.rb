@@ -42,7 +42,9 @@ module Spawn
     options.symbolize_keys!
     # setting options[:method] will override configured value in @@method
     if options[:method] == :yield || @@method == :yield
+      before_spawn(options, nil)
       yield
+      after_spawn(options, nil)
     elsif options[:method] == :thread || (options[:method] == nil && @@method == :thread)
       # for versions before 2.2, check for allow_concurrency
       if RAILS_2_2 || ActiveRecord::Base.allow_concurrency
@@ -101,8 +103,10 @@ module Spawn
         ActiveRecord::Base.spawn_reconnect
 
         # run the block of code that takes so long
-        yield
-
+        
+        before_spawn(options, Process.pid)
+        returnvalue = yield
+        after_spawn(options, Process.pid, returnvalue)
       rescue => ex
         @@logger.error "spawn> Exception in child[#{Process.pid}] - #{ex.class}: #{ex.message}"
       ensure
@@ -133,9 +137,27 @@ module Spawn
     ActiveRecord::Base.verify_active_connections!()
     thr = Thread.new do
       # run the long-running code block
-      yield
+      
+      before_spawn(options, Process.pid)
+      returnvalue = yield
+      after_spawn(options, Process.pid, returnvalue)
     end
     return SpawnId.new(:thread, thr)
   end
 
+  def after_spawn(options, pid, returnvalue=nil)
+    if options[:after_spawn]
+      [options[:after_spawn]].flatten.each do |proc_obj|
+        proc_obj.call(pid, returnvalue)
+      end
+    end
+  end
+  
+  def before_spawn(options, pid)
+    if options[:before_spawn]
+      [options[:before_spawn]].flatten.each do |proc_obj|
+        proc_obj.call(pid)
+      end
+    end
+  end
 end
